@@ -40,6 +40,12 @@ try:
 except ImportError:
     latex_to_mathml = None
 
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+
 
 class MarkdownToWordConverter:
     def __init__(self):
@@ -348,10 +354,10 @@ class MarkdownToWordConverter:
 
     def parse_mermaid_block(self, lines):
         """
-        Parse and render Mermaid code block using mermaid.ink API
+        Parse and render Mermaid code block using mermaid.ink API + Playwright for high quality
         Returns the number of lines consumed, or 0 if not a valid mermaid block
         """
-        if not REQUESTS_AVAILABLE:
+        if not REQUESTS_AVAILABLE or not PLAYWRIGHT_AVAILABLE:
             return 0
 
         # Check if first line is ```mermaid
@@ -384,68 +390,129 @@ class MarkdownToWordConverter:
             if time_since_last_call < 1.0:  # Wait at least 1 second between calls
                 time.sleep(1.0 - time_since_last_call)
 
-            # Request high-quality PNG from mermaid.ink
-            # Use type=png, width parameter, and scale=3 (max) for best quality
-            # API format: /img/{encoded}?type=png&width=2000&scale=3
-            url = f"https://mermaid.ink/img/{encoded}?type=png&width=2000&scale=3"
-            response = requests.get(url, timeout=15)
+            # Fetch SVG from mermaid.ink
+            svg_url = f"https://mermaid.ink/svg/{encoded}"
+            response = requests.get(svg_url, timeout=15)
             self.last_api_call_time = time.time()
 
-            if response.status_code == 200:
-                # Save to temp file
-                temp_png = os.path.join(tempfile.gettempdir(), f'mermaid_{hash(mermaid_text)}.png')
-                with open(temp_png, 'wb') as f:
-                    f.write(response.content)
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch SVG (HTTP {response.status_code})")
 
-                # Calculate appropriate size respecting both width and height constraints
-                # A4 dimensions: 8.27" x 11.69", max diagram: 75% = 6.2" x 8.77"
-                max_width = 6.2
-                max_height = 8.77
+            svg_content = response.text
 
-                # Get image dimensions to calculate aspect ratio
-                if PIL_AVAILABLE:
-                    try:
-                        img = Image.open(temp_png)
-                        img_width, img_height = img.size
-                        aspect_ratio = img_width / img_height
+            # Use Playwright to convert SVG to high-resolution PNG
+            # By embedding SVG inline, we avoid CORS restrictions
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
 
-                        # Calculate width needed if constrained by height
-                        width_for_height = max_height * aspect_ratio
+                # Create HTML with inline SVG
+                html_content = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                </head>
+                <body style="margin: 0; padding: 0;">
+                    <div id="svg-container">
+                        {svg_content}
+                    </div>
+                </body>
+                </html>
+                """
 
-                        # Use the smaller of the two to respect both constraints
-                        final_width = min(max_width, width_for_height)
-                    except:
-                        # If PIL fails, use default width
-                        final_width = max_width
-                else:
-                    # If PIL not available, use default width
-                    final_width = max_width
+                page.set_content(html_content)
 
-                # Insert the rendered PNG into the document
-                paragraph = self.doc.add_paragraph()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = paragraph.add_run()
-                run.add_picture(temp_png, width=Inches(final_width))
+                # Convert SVG to PNG using canvas
+                # Scale 5x for high resolution (targeting 4K quality)
+                png_base64 = page.evaluate("""
+                    () => {
+                        const svg = document.querySelector('svg');
+                        if (!svg) return null;
 
-                # Add some spacing after diagram
-                paragraph_format = paragraph.paragraph_format
-                paragraph_format.space_after = Pt(8)
+                        const svgRect = svg.getBoundingClientRect();
+                        const scale = 20;  // 20x resolution for true 4K quality
 
-                # Clean up temp file
+                        const canvas = document.createElement('canvas');
+                        canvas.width = svgRect.width * scale;
+                        canvas.height = svgRect.height * scale;
+
+                        const ctx = canvas.getContext('2d');
+                        ctx.scale(scale, scale);
+
+                        // Serialize SVG to XML and create data URL
+                        const svgData = new XMLSerializer().serializeToString(svg);
+                        const svgDataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+
+                        return new Promise((resolve, reject) => {
+                            const img = new Image();
+                            img.onload = () => {
+                                ctx.drawImage(img, 0, 0);
+                                const pngData = canvas.toDataURL('image/png').split(',')[1];
+                                resolve(pngData);
+                            };
+                            img.onerror = (e) => {
+                                reject(new Error('Failed to load SVG image'));
+                            };
+                            img.src = svgDataUrl;
+                        });
+                    }
+                """)
+
+                browser.close()
+
+            if not png_base64:
+                raise Exception("Failed to convert SVG to PNG")
+
+            # Decode base64 PNG
+            png_data = base64.b64decode(png_base64)
+
+            # Save to temp file
+            temp_png = os.path.join(tempfile.gettempdir(), f'mermaid_{hash(mermaid_text)}.png')
+            with open(temp_png, 'wb') as f:
+                f.write(png_data)
+
+            # Calculate appropriate size respecting both width and height constraints
+            # A4 dimensions: 8.27" x 11.69", max diagram: 75% = 6.2" x 8.77"
+            max_width = 6.2
+            max_height = 8.77
+
+            # Get image dimensions to calculate aspect ratio
+            if PIL_AVAILABLE:
                 try:
-                    os.remove(temp_png)
-                except:
-                    pass
+                    img = Image.open(temp_png)
+                    img_width, img_height = img.size
+                    aspect_ratio = img_width / img_height
 
-                print(f"✓ Rendered Mermaid diagram")
+                    # Calculate width needed if constrained by height
+                    width_for_height = max_height * aspect_ratio
+
+                    # Use the smaller of the two to respect both constraints
+                    final_width = min(max_width, width_for_height)
+                except:
+                    # If PIL fails, use default width
+                    final_width = max_width
             else:
-                print(f"Warning: Failed to render Mermaid diagram (HTTP {response.status_code})")
-                # Add error message to document
-                error_para = self.doc.add_paragraph()
-                error_run = error_para.add_run(f"[Mermaid diagram could not be rendered]")
-                error_run.font.name = 'Calibri'
-                error_run.font.size = Pt(11)
-                error_run.italic = True
+                # If PIL not available, use default width
+                final_width = max_width
+
+            # Insert the rendered PNG into the document
+            paragraph = self.doc.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = paragraph.add_run()
+            run.add_picture(temp_png, width=Inches(final_width))
+
+            # Add some spacing after diagram
+            paragraph_format = paragraph.paragraph_format
+            paragraph_format.space_after = Pt(8)
+
+            # Clean up temp file
+            try:
+                os.remove(temp_png)
+            except:
+                pass
+
+            print(f"✓ Rendered high-quality Mermaid diagram")
 
         except Exception as e:
             print(f"Warning: Could not render Mermaid diagram: {e}")

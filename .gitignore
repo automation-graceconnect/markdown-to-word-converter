@@ -41,3 +41,5 @@ Thumbs.db
 # Test files
 test_*.md
 test_*.docx
+~$*.docx
+*.docx

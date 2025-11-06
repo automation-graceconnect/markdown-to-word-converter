@@ -96,10 +96,11 @@ graph TD
 ````
 
 **Quality & Rendering:**
-- High-resolution PNG images (3000px width × 2x scale)
-- Automatically sized to fit page (max 75% of A4 dimensions)
+- True 4K resolution PNG images (20x scale, typically 4000+ pixels width)
+- Uses Playwright browser automation for high-quality SVG-to-PNG conversion
+- Automatically sized to fit page (max 75% of A4 dimensions: 6.2" × 8.77")
 - Maintains aspect ratio while respecting both width and height constraints
-- Crisp, clear diagrams perfect for printing or presentations
+- ~650-700 DPI effective resolution for crisp, professional diagrams
 
 **Note:** Requires internet connection to render diagrams via mermaid.ink API.
 
