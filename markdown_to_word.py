@@ -355,9 +355,10 @@ class MarkdownToWordConverter:
     def parse_mermaid_block(self, lines):
         """
         Parse and render Mermaid code block using mermaid.ink API + Playwright for high quality
+        Falls back to direct PNG if Playwright is unavailable
         Returns the number of lines consumed, or 0 if not a valid mermaid block
         """
-        if not REQUESTS_AVAILABLE or not PLAYWRIGHT_AVAILABLE:
+        if not REQUESTS_AVAILABLE:
             return 0
 
         # Check if first line is ```mermaid
@@ -400,41 +401,68 @@ class MarkdownToWordConverter:
 
             svg_content = response.text
 
-            # Use Playwright to convert SVG to high-resolution PNG
-            # By embedding SVG inline, we can take a screenshot at high resolution
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+            # Try to use Playwright for high-resolution conversion
+            # Falls back to direct PNG from API if Playwright unavailable
+            png_data = None
 
-                # Create page with high device scale factor for 4K quality (20x for ~4000px)
-                page = browser.new_page(device_scale_factor=20)
+            if PLAYWRIGHT_AVAILABLE:
+                try:
+                    # Use Playwright to convert SVG to high-resolution PNG
+                    # By embedding SVG inline, we can take a screenshot at high resolution
+                    with sync_playwright() as p:
+                        browser = p.chromium.launch(headless=True)
 
-                # Create HTML with inline SVG
-                html_content = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                </head>
-                <body style="margin: 0; padding: 0; background: white;">
-                    <div id="svg-container">
-                        {svg_content}
-                    </div>
-                </body>
-                </html>
-                """
+                        # Create page with high device scale factor for 4K quality (20x for ~4000px)
+                        page = browser.new_page(device_scale_factor=20)
 
-                page.set_content(html_content)
+                        # Create HTML with inline SVG
+                        html_content = f"""
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <meta charset="UTF-8">
+                        </head>
+                        <body style="margin: 0; padding: 0; background: white;">
+                            <div id="svg-container">
+                                {svg_content}
+                            </div>
+                        </body>
+                        </html>
+                        """
 
-                # Wait for SVG to be fully rendered
-                page.wait_for_selector('svg')
+                        page.set_content(html_content)
 
-                # Get the SVG element
-                svg_element = page.query_selector('svg')
+                        # Wait for SVG to be fully rendered
+                        page.wait_for_selector('svg')
 
-                # Take a screenshot of the SVG element (will be 5x resolution)
-                png_data = svg_element.screenshot(type='png')
+                        # Get the SVG element
+                        svg_element = page.query_selector('svg')
 
-                browser.close()
+                        # Take a screenshot of the SVG element (will be 20x resolution)
+                        png_data = svg_element.screenshot(type='png')
+
+                        browser.close()
+                        print(f"✓ Rendered high-quality Mermaid diagram")
+                except Exception as playwright_error:
+                    print(f"Warning: Playwright rendering failed ({playwright_error}), falling back to API PNG")
+                    png_data = None
+
+            # Fallback: fetch PNG directly from API if Playwright failed or unavailable
+            if png_data is None:
+                # Fetch PNG directly from mermaid.ink
+                png_url = f"https://mermaid.ink/img/{encoded}"
+                time_since_last_call = time.time() - self.last_api_call_time
+                if time_since_last_call < 1.0:
+                    time.sleep(1.0 - time_since_last_call)
+
+                png_response = requests.get(png_url, timeout=15)
+                self.last_api_call_time = time.time()
+
+                if png_response.status_code != 200:
+                    raise Exception(f"Failed to fetch PNG (HTTP {png_response.status_code})")
+
+                png_data = png_response.content
+                print(f"✓ Rendered Mermaid diagram (standard quality)")
 
             # Save to temp file
             temp_png = os.path.join(tempfile.gettempdir(), f'mermaid_{hash(mermaid_text)}.png')
@@ -480,8 +508,6 @@ class MarkdownToWordConverter:
                 os.remove(temp_png)
             except:
                 pass
-
-            print(f"✓ Rendered high-quality Mermaid diagram")
 
         except Exception as e:
             print(f"Warning: Could not render Mermaid diagram: {e}")

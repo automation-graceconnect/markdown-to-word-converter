@@ -43,3 +43,4 @@ test_*.md
 test_*.docx
 ~$*.docx
 *.docx
+build_test/
