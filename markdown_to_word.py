@@ -401,10 +401,12 @@ class MarkdownToWordConverter:
             svg_content = response.text
 
             # Use Playwright to convert SVG to high-resolution PNG
-            # By embedding SVG inline, we avoid CORS restrictions
+            # By embedding SVG inline, we can take a screenshot at high resolution
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
+
+                # Create page with high device scale factor for 4K quality (20x for ~4000px)
+                page = browser.new_page(device_scale_factor=20)
 
                 # Create HTML with inline SVG
                 html_content = f"""
@@ -413,7 +415,7 @@ class MarkdownToWordConverter:
                 <head>
                     <meta charset="UTF-8">
                 </head>
-                <body style="margin: 0; padding: 0;">
+                <body style="margin: 0; padding: 0; background: white;">
                     <div id="svg-container">
                         {svg_content}
                     </div>
@@ -423,49 +425,16 @@ class MarkdownToWordConverter:
 
                 page.set_content(html_content)
 
-                # Convert SVG to PNG using canvas
-                # Scale 5x for high resolution (targeting 4K quality)
-                png_base64 = page.evaluate("""
-                    () => {
-                        const svg = document.querySelector('svg');
-                        if (!svg) return null;
+                # Wait for SVG to be fully rendered
+                page.wait_for_selector('svg')
 
-                        const svgRect = svg.getBoundingClientRect();
-                        const scale = 20;  // 20x resolution for true 4K quality
+                # Get the SVG element
+                svg_element = page.query_selector('svg')
 
-                        const canvas = document.createElement('canvas');
-                        canvas.width = svgRect.width * scale;
-                        canvas.height = svgRect.height * scale;
-
-                        const ctx = canvas.getContext('2d');
-                        ctx.scale(scale, scale);
-
-                        // Serialize SVG to XML and create data URL
-                        const svgData = new XMLSerializer().serializeToString(svg);
-                        const svgDataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-
-                        return new Promise((resolve, reject) => {
-                            const img = new Image();
-                            img.onload = () => {
-                                ctx.drawImage(img, 0, 0);
-                                const pngData = canvas.toDataURL('image/png').split(',')[1];
-                                resolve(pngData);
-                            };
-                            img.onerror = (e) => {
-                                reject(new Error('Failed to load SVG image'));
-                            };
-                            img.src = svgDataUrl;
-                        });
-                    }
-                """)
+                # Take a screenshot of the SVG element (will be 5x resolution)
+                png_data = svg_element.screenshot(type='png')
 
                 browser.close()
-
-            if not png_base64:
-                raise Exception("Failed to convert SVG to PNG")
-
-            # Decode base64 PNG
-            png_data = base64.b64decode(png_base64)
 
             # Save to temp file
             temp_png = os.path.join(tempfile.gettempdir(), f'mermaid_{hash(mermaid_text)}.png')
