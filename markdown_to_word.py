@@ -13,6 +13,7 @@ import sys
 import os
 import base64
 import tempfile
+import time
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
@@ -37,6 +38,7 @@ except ImportError:
 class MarkdownToWordConverter:
     def __init__(self):
         self.doc = Document()
+        self.last_api_call_time = 0  # Track last mermaid API call for rate limiting
 
         # Set margins to 0.98" on all sides
         section = self.doc.sections[0]
@@ -371,9 +373,15 @@ class MarkdownToWordConverter:
             # Encode mermaid code to base64
             encoded = base64.b64encode(mermaid_text.encode('utf-8')).decode('utf-8')
 
+            # Add cooldown between API calls to be respectful to mermaid.ink
+            time_since_last_call = time.time() - self.last_api_call_time
+            if time_since_last_call < 1.0:  # Wait at least 1 second between calls
+                time.sleep(1.0 - time_since_last_call)
+
             # Request PNG from mermaid.ink
             url = f"https://mermaid.ink/img/{encoded}"
             response = requests.get(url, timeout=10)
+            self.last_api_call_time = time.time()
 
             if response.status_code == 200:
                 # Save to temp file
@@ -382,10 +390,11 @@ class MarkdownToWordConverter:
                     f.write(response.content)
 
                 # Insert the rendered PNG into the document
+                # A4 width = 8.27", 3/4 of that = 6.2"
                 paragraph = self.doc.add_paragraph()
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = paragraph.add_run()
-                run.add_picture(temp_png, width=Inches(6))
+                run.add_picture(temp_png, width=Inches(6.2))
 
                 # Add some spacing after diagram
                 paragraph_format = paragraph.paragraph_format
