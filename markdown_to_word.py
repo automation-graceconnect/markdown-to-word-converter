@@ -384,9 +384,11 @@ class MarkdownToWordConverter:
             if time_since_last_call < 1.0:  # Wait at least 1 second between calls
                 time.sleep(1.0 - time_since_last_call)
 
-            # Request PNG from mermaid.ink
-            url = f"https://mermaid.ink/img/{encoded}"
-            response = requests.get(url, timeout=10)
+            # Request high-quality PNG from mermaid.ink
+            # Use PNG format with high resolution (width=3000) and 2x scale for best quality
+            # The image will be scaled down in Word, maintaining high quality
+            url = f"https://mermaid.ink/img/{encoded}?type=png&width=3000&scale=2"
+            response = requests.get(url, timeout=15)  # Increased timeout for larger images
             self.last_api_call_time = time.time()
 
             if response.status_code == 200:

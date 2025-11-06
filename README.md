@@ -95,9 +95,13 @@ graph TD
 ```
 ````
 
-**Note:** Requires internet connection to render diagrams via mermaid.ink API.
+**Quality & Rendering:**
+- High-resolution PNG images (3000px width × 2x scale)
+- Automatically sized to fit page (max 75% of A4 dimensions)
+- Maintains aspect ratio while respecting both width and height constraints
+- Crisp, clear diagrams perfect for printing or presentations
 
-The diagrams are fetched as PNG images and inserted into your Word document at high quality.
+**Note:** Requires internet connection to render diagrams via mermaid.ink API.
 
 ## Document Formatting
 
