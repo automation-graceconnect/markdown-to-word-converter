@@ -11,9 +11,11 @@ A standalone executable tool that converts Markdown files to professionally form
   - Bold and italic formatting preserved
   - Tables converted to Word tables
   - LaTeX equations as Word equation objects
+  - **Mermaid diagrams automatically rendered as images**
   - Images with captions
   - Bullet and numbered lists
 - **No Installation Required**: Standalone executable with all dependencies bundled
+- **Lightweight**: ~15-20MB executable (no browser dependencies)
 
 ## Usage
 
@@ -65,9 +67,37 @@ Note: This creates a macOS/Linux executable, not a Windows .exe
 - Tables (GitHub-flavored markdown)
 - Inline LaTeX equations ($equation$)
 - Display LaTeX equations ($$equation$$)
+- **Mermaid diagrams** (```mermaid ... ```) - Rendered as PNG images
 - Images (![alt](path))
 - Bullet lists (-, *, +)
 - Numbered lists (1., 2., etc.)
+
+## Mermaid Diagram Support
+
+Mermaid diagrams are automatically rendered using the official mermaid.ink API service. All diagram types are supported:
+
+- Flowcharts (`graph TD`, `graph LR`)
+- Sequence diagrams (`sequenceDiagram`)
+- Class diagrams (`classDiagram`)
+- State diagrams (`stateDiagram`)
+- Entity Relationship diagrams (`erDiagram`)
+- Gantt charts (`gantt`)
+- Pie charts (`pie`)
+- And more!
+
+**Example:**
+````markdown
+```mermaid
+graph TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Success]
+    B -->|No| D[Failure]
+```
+````
+
+**Note:** Requires internet connection to render diagrams via mermaid.ink API.
+
+The diagrams are fetched as PNG images and inserted into your Word document at high quality.
 
 ## Document Formatting
 

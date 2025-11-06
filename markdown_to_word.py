@@ -11,6 +11,8 @@ Converts markdown files to Word documents with proper formatting.
 import re
 import sys
 import os
+import base64
+import tempfile
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
@@ -19,6 +21,12 @@ from docx.oxml.ns import nsdecls
 from docx.oxml.xmlchemy import BaseOxmlElement
 import argparse
 from tkinter import Tk, filedialog
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
 
 try:
     from latex2mathml.converter import convert as latex_to_mathml
@@ -330,6 +338,87 @@ class MarkdownToWordConverter:
             return True
         return False
 
+    def parse_mermaid_block(self, lines):
+        """
+        Parse and render Mermaid code block using mermaid.ink API
+        Returns the number of lines consumed, or 0 if not a valid mermaid block
+        """
+        if not REQUESTS_AVAILABLE:
+            return 0
+
+        # Check if first line is ```mermaid
+        if not lines[0].strip().lower() in ['```mermaid', '``` mermaid']:
+            return 0
+
+        # Find the closing ```
+        mermaid_code = []
+        line_idx = 1
+        while line_idx < len(lines):
+            line = lines[line_idx].rstrip()
+            if line.strip() == '```':
+                break
+            mermaid_code.append(line)
+            line_idx += 1
+
+        if line_idx >= len(lines):
+            # No closing ```, invalid block
+            return 0
+
+        # We have a valid mermaid block
+        mermaid_text = '\n'.join(mermaid_code)
+
+        try:
+            # Encode mermaid code to base64
+            encoded = base64.b64encode(mermaid_text.encode('utf-8')).decode('utf-8')
+
+            # Request PNG from mermaid.ink
+            url = f"https://mermaid.ink/img/{encoded}"
+            response = requests.get(url, timeout=10)
+
+            if response.status_code == 200:
+                # Save to temp file
+                temp_png = os.path.join(tempfile.gettempdir(), f'mermaid_{hash(mermaid_text)}.png')
+                with open(temp_png, 'wb') as f:
+                    f.write(response.content)
+
+                # Insert the rendered PNG into the document
+                paragraph = self.doc.add_paragraph()
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = paragraph.add_run()
+                run.add_picture(temp_png, width=Inches(6))
+
+                # Add some spacing after diagram
+                paragraph_format = paragraph.paragraph_format
+                paragraph_format.space_after = Pt(8)
+
+                # Clean up temp file
+                try:
+                    os.remove(temp_png)
+                except:
+                    pass
+
+                print(f"✓ Rendered Mermaid diagram")
+            else:
+                print(f"Warning: Failed to render Mermaid diagram (HTTP {response.status_code})")
+                # Add error message to document
+                error_para = self.doc.add_paragraph()
+                error_run = error_para.add_run(f"[Mermaid diagram could not be rendered]")
+                error_run.font.name = 'Calibri'
+                error_run.font.size = Pt(11)
+                error_run.italic = True
+
+        except Exception as e:
+            print(f"Warning: Could not render Mermaid diagram: {e}")
+            # Add error message to document
+            error_para = self.doc.add_paragraph()
+            error_run = error_para.add_run(f"[Mermaid diagram could not be rendered - requires internet connection]")
+            error_run.font.name = 'Calibri'
+            error_run.font.size = Pt(11)
+            error_run.italic = True
+
+        # Return number of lines consumed (including opening and closing ```)
+        return line_idx + 1
+
     def convert(self, markdown_file, output_file=None):
         """Convert markdown file to Word document"""
         if output_file is None:
@@ -396,6 +485,13 @@ class MarkdownToWordConverter:
 
                 i += 1
                 continue
+
+            # Check for mermaid code blocks
+            if line.strip().lower() in ['```mermaid', '``` mermaid']:
+                lines_consumed = self.parse_mermaid_block(lines[i:])
+                if lines_consumed > 0:
+                    i += lines_consumed
+                    continue
 
             # Check for headings
             heading_match = re.match(r'^(#{1,6})\s+(.+)$', line)
