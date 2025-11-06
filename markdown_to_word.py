@@ -30,6 +30,12 @@ except ImportError:
     REQUESTS_AVAILABLE = False
 
 try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
+try:
     from latex2mathml.converter import convert as latex_to_mathml
 except ImportError:
     latex_to_mathml = None
@@ -389,12 +395,35 @@ class MarkdownToWordConverter:
                 with open(temp_png, 'wb') as f:
                     f.write(response.content)
 
+                # Calculate appropriate size respecting both width and height constraints
+                # A4 dimensions: 8.27" x 11.69", max diagram: 75% = 6.2" x 8.77"
+                max_width = 6.2
+                max_height = 8.77
+
+                # Get image dimensions to calculate aspect ratio
+                if PIL_AVAILABLE:
+                    try:
+                        img = Image.open(temp_png)
+                        img_width, img_height = img.size
+                        aspect_ratio = img_width / img_height
+
+                        # Calculate width needed if constrained by height
+                        width_for_height = max_height * aspect_ratio
+
+                        # Use the smaller of the two to respect both constraints
+                        final_width = min(max_width, width_for_height)
+                    except:
+                        # If PIL fails, use default width
+                        final_width = max_width
+                else:
+                    # If PIL not available, use default width
+                    final_width = max_width
+
                 # Insert the rendered PNG into the document
-                # A4 width = 8.27", 3/4 of that = 6.2"
                 paragraph = self.doc.add_paragraph()
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = paragraph.add_run()
-                run.add_picture(temp_png, width=Inches(6.2))
+                run.add_picture(temp_png, width=Inches(final_width))
 
                 # Add some spacing after diagram
                 paragraph_format = paragraph.paragraph_format
